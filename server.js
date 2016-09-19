@@ -1,3 +1,6 @@
+const cluster = require('cluster');
+const http = require('http');
+
 
 var
     dgram = require("dgram");
@@ -9,26 +12,60 @@ var
     nReceived = 0,
     server = dgram.createSocket("udp4");
 
-server.on("error", function (err) {
-    console.log("server error:\n" + err.stack);
-    server.close();
-});
+if (cluster.isMaster) {
 
-server.on("message", function (msg, rinfo) {
-    nReceived++;
-    //console.log("server got: " + msg + " from " + rinfo.address + ":" + rinfo.port);
-    server.send(msg, 0, msg.length, rinfo.port, rinfo.address);
-});
+    // Keep track of http requests
+    var numReqs = 0;
+    setInterval(() => {
+        console.log('numReqs =', numReqs);
+    }, 1000);
 
-server.on("listening", function () {
-    var address = server.address();
-    console.log("server listening " +
-        address.address + ":" + address.port);
-});
+    // Count requests
+    function messageHandler(msg) {
+        if (msg.cmd && msg.cmd == 'notifyRequest') {
+            numReqs += 1;
+        }
+    }
 
-setInterval(function () {
-    console.info(nReceived);
-    nReceived = 0;
-}, 1000);
+    setInterval(function () {
+        console.info(numReqs);
+        numReqs = 0;
+    }, 1000);
 
-server.bind(SERVER_PORT);
+    // Start workers and listen for messages containing notifyRequest
+    const numCPUs = require('os').cpus().length;
+    for (var i = 0; i < numCPUs; i++) {
+        cluster.fork();
+    }
+
+    Object.keys(cluster.workers).forEach((id) => {
+        cluster.workers[id].on('message', messageHandler);
+    });
+
+} else {
+
+    server.on("error", function (err) {
+        console.log("server error:\n" + err.stack);
+        server.close();
+    });
+
+    server.on("message", function (msg, rinfo) {
+        process.send({ cmd: 'notifyRequest' });
+    });
+
+    server.on("listening", function () {
+        var address = server.address();
+        console.log("server listening " +
+            address.address + ":" + address.port);
+    });
+
+
+
+    server.bind(SERVER_PORT);
+
+
+
+}
+
+
+
